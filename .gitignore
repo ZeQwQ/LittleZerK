@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 环境变量
+.env
+
+# 日志
+*.log
+logs/
+
+# Config (contains API keys)
+~/.openharness_agent_config.json
+~/.openharness_agent_memory/
+
+# IDE
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# 私密文档
+面试可能的问题.md
