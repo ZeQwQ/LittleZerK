@@ -73,6 +73,18 @@ python3 agent.py
 - OpenAI SDK (OpenAI Compatible API)
 - Open-Meteo Weather API (免费)
 
+## 未来版本
+
+### Ver0.4 计划
+- 📄 **本地文件读取** - PDF、Markdown 解析与问答
+- 📋 **ToDo List** - 任务清单管理
+- 🔒 **权限安全** - 隐私信息读取询问
+- 🤖 **子 Agent** - 小小小泽
+- 🌐 **联网功能** - 搜索网络信息
+
+### Ver0.5 计划
+- 📧 **邮箱推送** - 每日天气推送至邮箱
+
 ## License
 
 MIT
