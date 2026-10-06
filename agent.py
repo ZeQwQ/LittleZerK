@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
-Minimal OpenHarness-Style Agent Loop - ver0.3
+Minimal OpenHarness-Style Agent Loop - ver0.4
 - 单文件: agent.py
 - AI 模型：用户自由选择
 - 天气 API：用户自由选择
 - 支持真实天气查询
 - 分层记忆系统：自动摘要 + 文档检索
+- ToDoList 工具：工作前必须先创建任务清单
+- 联网搜索：机票、火车票、网页搜索
+- 本地文件读取：PDF、Markdown、txt
 """
 
 import os
@@ -13,6 +16,7 @@ import sys
 import json
 import re
 import time
+import ast
 import urllib.request
 import urllib.parse
 from openai import OpenAI
@@ -32,7 +36,7 @@ class Memory:
         self.current_summary = []  # 当前积累的对话
         self.summaries = []       # 已生成的摘要列表
         self.message_count = 0     # 消息计数器
-        self.SUMMARY_THRESHOLD = 5  # 每5句话生成摘要
+        self.SUMMARY_THRESHOLD = 10  # 每10句话生成摘要（减少频繁压缩）
 
         self.summary_file = os.path.join(self.memory_dir, "summaries.json")
 
@@ -92,38 +96,49 @@ class Memory:
         if not self.current_summary:
             return ""
 
-        # 构造提取提示
+        # 构造提取提示 - 紧凑格式
         messages = [
             {
                 "role": "system",
-                "content": """你是一个信息提取助手。从对话历史中提取关键信息，生成简洁的摘要。
+                "content": """你是一个信息提取助手。从对话历史中提取关键信息，生成极简摘要。
 
-格式要求：
-- 用中文
-- 列出关键实体（人名、地点、事件、偏好等）
-- 列出已完成的任务或决策
-- 列出待处理的问题
-- 保持简洁，每条不超过20字
+格式要求（严格按此格式）：
+K:关键信息1|关键信息2|关键信息3...
+A:已完成的任务或结论
+P:待处理的问题或用户的下一步意图
 
-示例输出：
-[关键实体] 武汉、北京、DeepSeek
-[已完成] 询问了武汉天气
-[偏好] 喜欢简洁回答
-[待处理] 用户想问明天天气"""
+规则：
+- K行：列出关键实体、已完成查询、获取到的数据等，每个用|分隔
+- A行：当前任务是否完成，完成了写结论，未完成写进行中
+- P行：用户可能的下一步意图，或助手接下来要做什么
+- 总字数控制在150字以内
+- 直接输出，不要加任何标记符号（如##、###等）
+
+正确示例：
+K:用户问北京和上海的天气对比|助手查了北京晴22C|助手查了上海多云19C|助手对比了两地温度差异|助手给出了出行建议(上海需带伞)
+A:完成天气查询和对比分析|已给出完整回答
+P:任务完成，等待用户下一个问题
+
+错误示例（不要这样写）：
+[关键实体] 北京、上海
+[已完成] 天气查询
+[待处理] 无"""
             }
         ]
 
-        # 添加对话历史
+        # 添加对话历史（限制长度减少token）
         for msg in self.current_summary:
             role = "用户" if msg["role"] == "user" else "助手"
+            # 限制每条消息长度
+            content = msg['content'][:300] if len(msg['content']) > 300 else msg['content']
             messages.append({
                 "role": "user",
-                "content": f"{role}说: {msg['content'][:200]}"
+                "content": f"{role}: {content}"
             })
 
         messages.append({
             "role": "user",
-            "content": "请提取上述对话的关键信息："
+            "content": "请提取关键信息（严格按K:|A:|P:格式）："
         })
 
         try:
@@ -131,33 +146,25 @@ class Memory:
                 model=model,
                 messages=messages,
                 temperature=0.3,
-                max_tokens=500,
+                max_tokens=300,  # 减少token
             )
             return response.choices[0].message.content or ""
         except Exception as e:
-            return f"[摘要生成失败: {e}]"
+            return f"[摘要失败: {e}]"
 
     def create_summary_doc(self, content: str) -> str:
-        """创建摘要文档"""
+        """创建摘要文档 - 极简格式"""
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         doc_name = f"summary_{timestamp}.txt"
         doc_path = os.path.join(self.memory_dir, doc_name)
 
-        # 包含时间范围的摘要内容
+        # 获取时间范围
         start_time = self.current_summary[0]["time"] if self.current_summary else 0
         end_time = self.current_summary[-1]["time"] if self.current_summary else 0
-        time_range = f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(start_time))} ~ {time.strftime('%H:%M', time.localtime(end_time))}"
+        time_str = time.strftime("%m-%d %H:%M", time.localtime(start_time))
 
-        summary_content = f"""# 对话摘要 {time_range}
-
-## 关键信息
-{content}
-
-## 原始对话
-"""
-        for msg in self.current_summary:
-            role = "用户" if msg["role"] == "user" else "助手"
-            summary_content += f"\n[{role}] {msg['content'][:100]}..."
+        # 极简格式：时间 + 摘要内容
+        summary_content = f"## {time_str}\n{content}"
 
         with open(doc_path, "w", encoding="utf-8") as f:
             f.write(summary_content)
@@ -183,55 +190,85 @@ class Memory:
 
         return doc_name
 
-    def retrieve(self, query: str = "", top_k: int = 5) -> str:
-        """检索所有记忆上下文，按时间顺序读取"""
+    def retrieve(self, query: str = "") -> str:
+        """
+        检索记忆上下文，动态决定看多少摘要和当前积累
+
+        规则：
+        - 每 10 条消息生成一个摘要
+        - message_count = 1-9: 看 0 个摘要 + 1-9 条当前积累
+        - message_count = 10: 看 1 个摘要 + 0 条积累（刚生成摘要）
+        - message_count = 11-19: 看 1 个摘要 + 1-9 条当前积累
+        - message_count = 20: 看 2 个摘要 + 0 条积累（刚生成摘要）
+        - message_count = 21-29: 看 2 个摘要 + 1-9 条当前积累
+        - 以此类推...
+        """
         contexts = []
 
-        # 1. 当前积累的对话（未生成摘要的）
-        if self.current_summary:
+        # 计算看几个摘要和当前积累
+        if self.message_count == 0:
+            # 刚生成摘要，没有当前积累
+            visible_summaries = len(self.summaries)
             current_msgs = []
-            for msg in self.current_summary:
-                role = "用户" if msg["role"] == "user" else "助手"
-                current_msgs.append(f"{role}: {msg['content'][:150]}")
-            contexts.append(("current", 0, "【当前对话（未保存）】\n" + "\n".join(current_msgs)))
+        elif self.message_count % 10 == 0:
+            # 刚好是 10 的倍数，刚生成摘要，只看对应数量摘要
+            visible_summaries = self.message_count // 10
+            current_msgs = []
+        else:
+            # 还有当前积累没保存
+            visible_summaries = self.message_count // 10
+            if self.current_summary:
+                current_msgs = []
+                for msg in self.current_summary:
+                    role = "用户" if msg["role"] == "user" else "助手"
+                    current_msgs.append(f"{role}: {msg['content'][:100]}")
 
-        # 2. 读取所有已保存的摘要文档，按时间顺序
+        # 1. 当前积累的对话（如果有）
+        if current_msgs:
+            contexts.append(("current", 0, "".join(current_msgs)))
+
+        # 2. 读取对应数量的已保存摘要文档，按时间顺序
         all_docs = sorted(self.summaries, key=lambda x: x.get("time", 0))
-        for s in all_docs[-top_k:]:  # 取最近 top_k 个
+        for s in all_docs[-visible_summaries:]:
             doc_path = os.path.join(self.memory_dir, s.get("doc", ""))
             if os.path.exists(doc_path):
                 try:
                     with open(doc_path, "r", encoding="utf-8") as f:
                         content = f.read()
-                        # 提取关键信息和时间
+                        # 提取时间
                         time_str = s.get("time", 0)
                         if time_str:
-                            time_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(time_str))
+                            time_str = time.strftime("%m-%d %H:%M", time.localtime(time_str))
                         else:
-                            time_str = "未知时间"
+                            time_str = "??-??"
 
-                        if "## 关键信息" in content:
-                            key_info = content.split("## 关键信息")[1].split("##")[0].strip()
-                            contexts.append((s.get("doc", ""), time_str, f"【历史摘要 {time_str}】\n{key_info}"))
+                        # 新格式：K:|A:|P:，直接读取
+                        if "K:" in content or "A:" in content or "P:" in content:
+                            lines = content.strip().split('\n')
+                            if lines and lines[0].startswith('## '):
+                                summary_content = '\n'.join(lines[1:])
+                            else:
+                                summary_content = content
+                            contexts.append((s.get("doc", ""), time_str, f"[{time_str}]\n{summary_content}"))
                         else:
-                            contexts.append((s.get("doc", ""), time_str, f"【历史摘要 {time_str}】\n{content[:200]}"))
+                            contexts.append((s.get("doc", ""), time_str, f"[{time_str}]\n{content[:100]}"))
                 except Exception:
                     pass
 
         if not contexts:
             return ""
 
-        # 按时间顺序输出
-        result_parts = ["\n[完整历史上下文 - 按时间顺序]"]
-        for _, _, ctx in contexts:
+        # 紧凑格式输出
+        result_parts = ["\n[历史"]
+        for _, time_str, ctx in contexts:
             result_parts.append(f"\n{ctx}")
-        result_parts.append("\n[/完整历史上下文]\n")
+        result_parts.append("\n]\n")
 
         return "".join(result_parts)
 
     def get_full_context(self) -> str:
         """获取完整上下文（用于工具调用前的思考）"""
-        return self.retrieve(top_k=10)
+        return self.retrieve()
 
     def reset(self):
         """重置记忆"""
@@ -244,6 +281,91 @@ class Memory:
 # ─────────────────────────────────────────────────────────────
 config = {}
 memory = None
+todo_list = None  # ToDoList 实例
+
+# ─────────────────────────────────────────────────────────────
+# ToDoList 任务清单系统
+# ─────────────────────────────────────────────────────────────
+class ToDoList:
+    """任务清单：工作前必须创建任务清单，一步一步执行"""
+
+    def __init__(self):
+        self.tasks = []       # 任务列表
+        self.completed = []   # 已完成任务
+        self.current_index = 0  # 当前任务索引
+        self.is_active = False  # 清单是否激活
+
+    def create(self, tasks: list[str]) -> str:
+        """创建任务清单"""
+        if not tasks:
+            return "❌ 任务清单不能为空"
+
+        self.tasks = tasks
+        self.completed = []
+        self.current_index = 0
+        self.is_active = True
+
+        # 格式化输出清单
+        result = ["✅ 任务清单已创建："]
+        for i, task in enumerate(tasks, 1):
+            result.append(f"  {i}. {task}")
+        result.append(f"\n📋 共 {len(tasks)} 个任务，开始执行...")
+        return "\n".join(result)
+
+    def get_current_task(self) -> str | None:
+        """获取当前任务"""
+        if not self.is_active or self.current_index >= len(self.tasks):
+            return None
+        return self.tasks[self.current_index]
+
+    def complete_task(self, result: str = "") -> str:
+        """标记当前任务完成，返回下一个任务"""
+        if not self.is_active:
+            return ""
+
+        task = self.get_current_task()
+        if task:
+            self.completed.append({
+                "task": task,
+                "result": result,
+                "index": self.current_index
+            })
+
+        self.current_index += 1
+
+        # 检查是否全部完成
+        if self.current_index >= len(self.tasks):
+            return "【清单完成】"
+
+        # 返回下一个任务
+        next_task = self.tasks[self.current_index]
+        return f"【任务 {self.current_index + 1}/{len(self.tasks)}】{next_task}"
+
+    def get_status(self) -> str:
+        """获取清单状态"""
+        if not self.is_active:
+            return "❌ 暂无任务清单"
+
+        status = [f"📋 任务清单状态 ({self.current_index}/{len(self.tasks)} 完成)："]
+        for i, task in enumerate(self.tasks):
+            if i < self.current_index:
+                status.append(f"  ✅ {i+1}. {task}")
+            elif i == self.current_index:
+                status.append(f"  🔄 {i+1}. {task} (进行中)")
+            else:
+                status.append(f"  ⏳ {i+1}. {task}")
+        return "\n".join(status)
+
+    def is_complete(self) -> bool:
+        """检查清单是否全部完成"""
+        return self.is_active and self.current_index >= len(self.tasks)
+
+    def reset(self):
+        """重置清单"""
+        self.tasks = []
+        self.completed = []
+        self.current_index = 0
+        self.is_active = False
 
 # ─────────────────────────────────────────────────────────────
 # AI 模型预设
@@ -415,6 +537,118 @@ def get_tools(weather_provider: str = None):
                     }
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "create_todo_list",
+                "description": "创建任务清单。收到用户问题后，必须先创建清单列出解决步骤，然后按清单逐步执行。清单只保存在内存中。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "tasks": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "任务步骤列表，如 [\"搜索记忆了解上下文\", \"查询天气\", \"综合回答\"]"
+                        }
+                    },
+                    "required": ["tasks"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "complete_task",
+                "description": "标记当前任务完成，系统会返回下一个任务。必须按清单顺序一个一个完成任务。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "result": {"type": "string", "description": "当前任务的执行结果简述"}
+                    }
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "save_session_state",
+                "description": "保存当前会话状态到 latest.json 文件。包括 session_id、配置、todo 状态、记忆状态等。用于会话结束或需要保存进度时调用。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {}
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_current_time",
+                "description": "获取当前日期和时间。返回格式化的当前时间，包括年、月、日、时、分、秒和星期几。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {}
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "search_flight",
+                "description": "搜索机票信息。输入出发地、目的地和日期，返回航班搜索结果（仅供参考，不支持购票）。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "departure": {"type": "string", "description": "出发城市，如 Beijing、Peking"},
+                        "destination": {"type": "string", "description": "目的城市，如 Shanghai"},
+                        "date": {"type": "string", "description": "出发日期，格式 YYYY-MM-DD，如 2026-10-10"}
+                    },
+                    "required": ["departure", "destination", "date"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "search_train",
+                "description": "搜索火车票信息。输入出发地、目的地，返回火车车次搜索结果（仅供参考，不支持购票）。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "departure": {"type": "string", "description": "出发城市，如 Beijing"},
+                        "destination": {"type": "string", "description": "目的城市，如 Shanghai"}
+                    },
+                    "required": ["departure", "destination"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "search_web",
+                "description": "通用网页搜索。输入任意搜索关键词，返回相关网页结果。适用于新闻、价格、知识百科、餐厅推荐等各种问题。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "搜索关键词/问题，如 Python教程、今日新闻、iPhone价格"}
+                    },
+                    "required": ["query"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "读取本地文件内容。支持 PDF、Markdown、txt 格式，提取文件中的文字内容。读取后可以基于文件内容回答用户问题。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {"type": "string", "description": "文件的完整路径，如 /Users/zerk/Documents/笔记.md 或 ./readme.md"}
+                    },
+                    "required": ["file_path"]
+                }
+            }
         }
     ]
 
@@ -461,13 +695,29 @@ def get_tools(weather_provider: str = None):
 # 工具实现
 # ─────────────────────────────────────────────────────────────
 def calculator(expression: str) -> str:
+    """安全的数学表达式计算器"""
     try:
         allowed_chars = set("0123456789.+-*/() **%")
-        if all(c in allowed_chars or c.isspace() for c in expression):
-            result = eval(expression)
-            return str(result)
-        else:
-            return f"错误: 表达式包含无效字符"
+        if not all(c in allowed_chars or c.isspace() for c in expression):
+            return "错误: 表达式包含无效字符"
+
+        # 使用 AST 解析验证表达式语法
+        tree = ast.parse(expression, mode='eval')
+
+        # 验证只包含数学运算（禁止函数调用、变量引用等）
+        allowed_nodes = (
+            ast.Expression, ast.BinOp, ast.UnaryOp, ast.Constant,
+            ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Mod, ast.Pow,
+            ast.USub, ast.UAdd
+        )
+
+        for node in ast.walk(tree):
+            if not isinstance(node, allowed_nodes):
+                return "错误: 表达式包含不支持的操作"
+
+        # 使用受限命名空间安全执行
+        result = eval(expression, {"__builtins__": {}}, {})
+        return str(result)
     except Exception as e:
         return f"错误: {e}"
 
@@ -591,12 +841,304 @@ def change_weather_api(provider: str, reason: str = "") -> str:
     else:
         return f"❌ 用户拒绝了更换请求"
 
+def save_session_state(msgs: list = None) -> str:
+    """保存当前会话状态"""
+    global config, memory, todo_list
+    import uuid
+    from datetime import datetime
+
+    save_mode = config.get("session_save_mode", "overwrite")
+
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        session_id = str(uuid.uuid4())[:8]
+
+        # 提取对话摘要（用户问题和助手回答）
+        dialogue_summary = []
+        if msgs:
+            for m in msgs:
+                if m["role"] == "user":
+                    content = m.get("content", "")[:100]
+                    dialogue_summary.append(f"用户: {content}{'...' if len(m.get('content', '')) > 100 else ''}")
+                elif m["role"] == "assistant" and m.get("content"):
+                    content = m.get("content", "")[:100]
+                    dialogue_summary.append(f"助手: {content}{'...' if len(m.get('content', '')) > 100 else ''}")
+
+        # 提取待完成任务列表
+        pending_tasks = []
+        if todo_list and todo_list.is_active:
+            for i in range(todo_list.current_index, len(todo_list.tasks)):
+                pending_tasks.append(todo_list.tasks[i])
+
+        latest_entry = {
+            "session_id": session_id,
+            "timestamp": timestamp,
+            "cwd": os.getcwd(),
+            "model": config.get("model", "unknown"),
+            "ai_provider": config.get("provider", "unknown"),
+            "ai_base_url": config.get("base_url", ""),
+            "weather_provider": config.get("weather_provider", "free"),
+            "date": timestamp,
+            "todo_list": {
+                "is_active": todo_list.is_active if todo_list else False,
+                "current_index": todo_list.current_index if todo_list else 0,
+                "total_tasks": len(todo_list.tasks) if todo_list else 0,
+                "completed_tasks": len(todo_list.completed) if todo_list else 0,
+                "tasks": todo_list.tasks if todo_list else [],
+                "completed_details": [
+                    {"task": c["task"], "result": c.get("result", "")[:50]}
+                    for c in (todo_list.completed if todo_list else [])
+                ],
+                "pending_tasks": pending_tasks,
+            },
+            "memory": {
+                "message_count": memory.message_count if memory else 0,
+                "summary_count": len(memory.summaries) if memory else 0,
+                "summaries_preview": [
+                    {"doc": s.get("doc", ""), "preview": s.get("preview", "")[:100]}
+                    for s in (memory.summaries[-3:] if memory else [])
+                ],
+            },
+            "message_count": len([m for m in msgs if m["role"] in ("user", "assistant")]),
+            "dialogue_summary": dialogue_summary[-10:],  # 最近10条对话
+        }
+
+        if save_mode == "timestamp":
+            # 时间戳模式：保存为 latest_{timestamp}.json
+            filename = f"latest_{timestamp}.json"
+            with open(filename, "w", encoding="utf-8") as f:
+                json.dump(latest_entry, f, ensure_ascii=False, indent=2)
+
+            # 更新 index 文件
+            index_file = "latest_index.json"
+            try:
+                if os.path.exists(index_file):
+                    with open(index_file, "r") as f:
+                        index_data = json.load(f)
+                else:
+                    index_data = {"sessions": []}
+            except:
+                index_data = {"sessions": []}
+
+            index_data["sessions"].insert(0, {
+                "session_id": session_id,
+                "timestamp": timestamp,
+                "filename": filename,
+                "model": config.get("model", "unknown"),
+                "message_count": latest_entry["message_count"],
+                "todo_summary": f"{todo_list.current_index if todo_list else 0}/{len(todo_list.tasks) if todo_list else 0}" if todo_list and todo_list.tasks else "无",
+                "dialogue_preview": dialogue_summary[-2:] if dialogue_summary else [],
+            })
+            index_data["sessions"] = index_data["sessions"][:10]
+
+            with open(index_file, "w", encoding="utf-8") as f:
+                json.dump(index_data, f, ensure_ascii=False, indent=2)
+
+            return f"✅ 会话已保存: {filename}"
+        else:
+            # 覆盖模式：只保存 latest.json
+            with open("latest.json", "w", encoding="utf-8") as f:
+                json.dump(latest_entry, f, ensure_ascii=False, indent=2)
+
+            return "✅ 会话已保存: latest.json"
+
+        return f"✅ 会话已保存: {filename}"
+    except Exception as e:
+        return f"❌ 保存失败: {e}"
+
+def get_current_time() -> str:
+    """获取当前日期和时间"""
+    from datetime import datetime
+
+    now = datetime.now()
+    weekday_names = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+    weekday = weekday_names[now.weekday()]
+
+    return (f"当前时间：{now.strftime('%Y年%m月%d日 %H:%M:%S')}\n"
+            f"星期：{weekday}\n"
+            f"年份：{now.year}年\n"
+            f"月份：{now.month}月\n"
+            f"日期：{now.day}日")
+
+def search_flight(departure: str, destination: str, date: str) -> str:
+    """搜索机票信息"""
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+
+        query = f"{departure} to {destination} flight {date}"
+        url = f"https://www.bing.com/search?q={requests.utils.quote(query)}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+
+        resp = requests.get(url, headers=headers, timeout=15)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+
+        results = []
+        for item in soup.select('li.b_algo')[:8]:
+            title_elem = item.select_one('h2 a')
+            snippet_elem = item.select_one('div.b_caption p')
+            if title_elem:
+                results.append({
+                    "title": title_elem.get_text(),
+                    "url": title_elem.get('href', ''),
+                    "snippet": snippet_elem.get_text()[:200] if snippet_elem else ''
+                })
+
+        if not results:
+            return f"未找到 {departure} 到 {destination} 的航班信息"
+
+        output = [f"🔍 航班搜索结果：{departure} → {destination}（{date}）\n"]
+        output.append(f"共找到 {len(results)} 条结果（仅供参考，实际价格请以官网为准）：\n")
+
+        for i, r in enumerate(results, 1):
+            output.append(f"{i}. {r['title']}")
+            output.append(f"   {r['snippet']}")
+            output.append(f"   链接：{r['url']}\n")
+
+        return "\n".join(output)
+    except Exception as e:
+        return f"搜索失败：{e}"
+
+def search_train(departure: str, destination: str) -> str:
+    """搜索火车票信息"""
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+
+        query = f"{departure} to {destination} train schedule"
+        url = f"https://www.bing.com/search?q={requests.utils.quote(query)}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+
+        resp = requests.get(url, headers=headers, timeout=15)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+
+        results = []
+        for item in soup.select('li.b_algo')[:8]:
+            title_elem = item.select_one('h2 a')
+            snippet_elem = item.select_one('div.b_caption p')
+            if title_elem:
+                results.append({
+                    "title": title_elem.get_text(),
+                    "url": title_elem.get('href', ''),
+                    "snippet": snippet_elem.get_text()[:200] if snippet_elem else ''
+                })
+
+        if not results:
+            return f"未找到 {departure} 到 {destination} 的火车信息"
+
+        output = [f"🔍 火车搜索结果：{departure} → {destination}\n"]
+        output.append(f"共找到 {len(results)} 条结果（仅供参考，实际信息请以12306官网为准）：\n")
+
+        for i, r in enumerate(results, 1):
+            output.append(f"{i}. {r['title']}")
+            output.append(f"   {r['snippet']}")
+            output.append(f"   链接：{r['url']}\n")
+
+        return "\n".join(output)
+    except Exception as e:
+        return f"搜索失败：{e}"
+
+def search_web(query: str) -> str:
+    """通用网页搜索"""
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+
+        url = f"https://www.bing.com/search?q={requests.utils.quote(query)}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+
+        resp = requests.get(url, headers=headers, timeout=15)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+
+        results = []
+        for item in soup.select('li.b_algo')[:6]:
+            title_elem = item.select_one('h2 a')
+            snippet_elem = item.select_one('div.b_caption p')
+            if title_elem:
+                results.append({
+                    "title": title_elem.get_text(),
+                    "url": title_elem.get('href', ''),
+                    "snippet": snippet_elem.get_text()[:200] if snippet_elem else ''
+                })
+
+        if not results:
+            return f"未找到关于「{query}」的相关结果"
+
+        output = [f"🔍 搜索结果：{query}\n"]
+        output.append(f"共找到 {len(results)} 条结果：\n")
+
+        for i, r in enumerate(results, 1):
+            output.append(f"{i}. {r['title']}")
+            output.append(f"   {r['snippet']}")
+            output.append(f"   链接：{r['url']}\n")
+
+        return "\n".join(output)
+    except Exception as e:
+        return f"搜索失败：{e}"
+
+def read_file(file_path: str) -> str:
+    """读取本地文件（PDF 或 Markdown），提取主要内容"""
+    import os
+
+    # 安全检查：防止路径遍历
+    file_path = os.path.abspath(file_path)
+
+    if not os.path.exists(file_path):
+        return f"❌ 文件不存在：{file_path}"
+
+    # 检查文件大小（限制 10MB）
+    file_size = os.path.getsize(file_path)
+    if file_size > 10 * 1024 * 1024:
+        return f"❌ 文件太大（{file_size / 1024 / 1024:.1f}MB），请选择 10MB 以内的文件"
+
+    ext = os.path.splitext(file_path)[1].lower()
+
+    try:
+        if ext == ".pdf":
+            from pypdf import PdfReader
+            reader = PdfReader(file_path)
+            text_parts = []
+            for i, page in enumerate(reader.pages):
+                text = page.extract_text()
+                if text:
+                    text_parts.append(f"[第{i+1}页]\n{text}")
+            if not text_parts:
+                return "⚠️ PDF 中未提取到文字，可能是因为扫描版 PDF"
+            content = "\n\n".join(text_parts)
+            return f"📄 PDF 文件：{os.path.basename(file_path)}\n共 {len(reader.pages)} 页\n\n{content[:8000]}"
+        elif ext == ".md":
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            return f"📝 Markdown 文件：{os.path.basename(file_path)}\n\n{content[:10000]}"
+        elif ext in (".txt", ".text"):
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            return f"📄 文本文件：{os.path.basename(file_path)}\n\n{content[:10000]}"
+        else:
+            return f"❌ 不支持的文件格式：{ext}，仅支持 .pdf、.md、.txt"
+    except Exception as e:
+        return f"❌ 读取文件失败：{e}"
+
 def get_tool_impls(weather_provider: str = None):
-    global memory
+    global memory, todo_list
     impls = {
         "calculator": calculator,
         "search_memory": lambda query="": memory.retrieve(query) if memory else "记忆系统未初始化",
         "change_weather_api": change_weather_api,
+        "create_todo_list": lambda tasks: todo_list.create(tasks) if todo_list else "ToDoList 未初始化",
+        "complete_task": lambda result="": todo_list.complete_task(result) if todo_list else "ToDoList 未初始化",
+        "save_session_state": save_session_state,
+        "get_current_time": get_current_time,
+        "search_flight": search_flight,
+        "search_train": search_train,
+        "search_web": search_web,
+        "read_file": read_file,
     }
     if weather_provider:
         impls["get_weather"] = lambda city, p=weather_provider: get_weather(city, p)
@@ -639,9 +1181,29 @@ def create_messages(weather_provider: str = None, memory_context: str = ""):
 
 可用工具：
 1. search_memory - 必用！回答前先调用获取完整历史上下文
-2. calculator - 当用户需要计算数学表达式时使用
-3. get_weather - 当用户询问天气、需要穿衣建议、想知道某地温度等天气相关问题时使用
-4. change_weather_api - 更换天气 API 提供商（当 get_weather 查询失败时使用）
+2. create_todo_list - 必用！收到问题后先创建任务清单
+3. complete_task - 按清单执行，每完成一步调用一次
+4. calculator - 当用户需要计算数学表达式时使用
+5. get_weather - 当用户询问天气、需要穿衣建议、想知道某地温度等天气相关问题时使用
+6. change_weather_api - 更换天气 API 提供商（当 get_weather 查询失败时使用）
+7. get_current_time - 当用户询问当前时间、日期、星期几，或需要根据时间做决策时使用
+8. search_flight - 当用户询问机票、航班信息时使用，输入出发地、目的地、日期
+9. search_train - 当用户询问火车票、车次信息时使用，输入出发地、目的地
+10. search_web - 通用网页搜索，适用于新闻、价格、知识百科、餐厅推荐等各种问题
+11. read_file - 当用户要求读取本地文件（PDF、Markdown、txt）时使用，输入完整文件路径
+
+【ToDoList 使用流程 - 强制执行】
+1. 收到用户问题后，先在脑中对问题进行思考（不要输出，只是分析）
+2. 思考清楚后，调用 create_todo_list 创建任务清单
+3. 清单第一步必须是"思考"，分析用户意图和解决方向：
+   - 例如：["思考：用户问天气，需要先了解用户在哪/查哪里的天气", "搜索记忆了解上下文", "查询天气", "给出回答"]
+4. 创建清单后，按顺序执行每个任务
+5. 每完成一个任务，调用 complete_task(result="任务执行结果")
+6. 系统会返回下一个任务，继续执行
+7. 所有任务完成后，如果清单全部完成，主模型判断是否可以回答用户问题
+8. 如果可以回答，给出完整回答；如果还有补充，可以继续
+
+【重要】每次用户发消息，都要重新思考并判断是否需要创建新清单，不是只在第一次创建！
 
 【天气工具使用】
 - get_weather 只接受英文城市名！
@@ -876,6 +1438,25 @@ def step6_input_weather_key(state: dict) -> dict:
             return state
         print("Key 不能为空")
 
+def step7_select_session_save_mode(state: dict) -> dict:
+    print("\n" + "-" * 40)
+    print("📍 选择会话保存方式")
+    print(f"   输入 {STEP_BACK} 返回\n")
+    print("  1. 自动覆盖（latest.json） - 节约空间，每次只保存一份")
+    print("  2. 时间戳保存（latest_xxx.json） - 详细完整，保留历史记录")
+
+    while True:
+        c = input(f"\n选择保存方式 (1/2) [{STEP_BACK} 返回]: ").strip()
+        if c == STEP_BACK:
+            return None
+        if c == "1":
+            state["session_save_mode"] = "overwrite"
+            return state
+        if c == "2":
+            state["session_save_mode"] = "timestamp"
+            return state
+        print("无效选择，请输入 1 或 2")
+
 def get_config(force_reset: bool = False):
     global config
 
@@ -928,9 +1509,15 @@ def get_config(force_reset: bool = False):
     if result is None:
         return get_config()
 
+    result = step7_select_session_save_mode(state)
+    if result is None:
+        return get_config()
+
     base_url = state["base_url"]
     if base_url and not base_url.endswith("/v1"):
         base_url = base_url.rstrip("/") + "/v1"
+
+    save_mode_names = {"overwrite": "自动覆盖（latest.json）", "timestamp": "时间戳（latest_xxx.json）"}
 
     cfg = {
         "base_url": base_url,
@@ -940,6 +1527,7 @@ def get_config(force_reset: bool = False):
         "provider_key": state["provider_key"],
         "weather_provider": state["weather_provider"],
         "weather_api_key": state.get("weather_api_key", ""),
+        "session_save_mode": state.get("session_save_mode", "overwrite"),
     }
 
     save_config(cfg)
@@ -950,6 +1538,7 @@ def get_config(force_reset: bool = False):
     print(f"   AI 提供商: {state['preset']['name']}")
     print(f"   AI 模型: {state['model']}")
     print(f"   天气 API: {state['weather_preset']['name']}")
+    print(f"   会话保存: {save_mode_names.get(state.get('session_save_mode', 'overwrite'))}")
     print("=" * 50)
 
     return cfg
@@ -1032,10 +1621,11 @@ def execute_tool_calls(messages: list, tools: list, tool_impls: dict, client: Op
 # Agent 主循环
 # ─────────────────────────────────────────────────────────────
 def run_loop(client: OpenAI, model: str, provider: str, weather_provider: str):
-    global memory
+    global memory, todo_list
 
-    # 初始化记忆系统
+    # 初始化记忆系统和任务清单
     memory = Memory()
+    todo_list = ToDoList()
 
     tools = get_tools(weather_provider)
     tool_impls = get_tool_impls(weather_provider)
@@ -1056,17 +1646,25 @@ def run_loop(client: OpenAI, model: str, provider: str, weather_provider: str):
         try:
             user_input = input("\n你: ").strip()
         except KeyboardInterrupt:
+            # Ctrl+C 退出前自动保存会话状态
+            if todo_list and memory:
+                save_result = save_session_state(messages)
+                print(f"\n{save_result}")
             print("\n\n再见!")
             break
 
         if user_input.lower() in ("quit", "exit", "q"):
-            print("再见!")
+            # 退出前自动保存会话状态
+            save_result = save_session_state(messages)
+            print(f"\n{save_result}")
+            print("\n再见!")
             break
 
         if user_input.lower() == "clear":
             memory.reset()
+            todo_list.reset()
             messages = create_messages(weather_provider, "")
-            print("✅ 对话已清空，记忆已重置")
+            print("✅ 对话已清空，记忆和任务清单已重置")
             continue
 
         if user_input.lower() == "api choose":
@@ -1076,7 +1674,11 @@ def run_loop(client: OpenAI, model: str, provider: str, weather_provider: str):
         if not user_input:
             continue
 
-        # 检查是否需要生成摘要（每5条消息）
+        # 如果上一轮任务清单已完成，重置它让模型为新问题重新思考
+        if todo_list and todo_list.is_complete():
+            todo_list.reset()
+
+        # 检查是否需要生成摘要（每10条消息）
         if memory.should_summarize():
             print("\n📝 正在生成对话摘要...")
             doc_name = memory.summarize(client, model)

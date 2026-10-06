@@ -14,6 +14,9 @@ logs/
 ~/.openharness_agent_config.json
 ~/.openharness_agent_memory/
 
+# 会话保存文件
+latest*.json
+
 # IDE
 .vscode/
 .idea/
