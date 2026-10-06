@@ -1247,7 +1247,7 @@ STEP_BACK = "0"
 
 def step1_select_input_method() -> str:
     print("\n" + "=" * 50)
-    print("🤖 OpenHarness Agent - ver0.3")
+    print("🤖 OpenHarness Agent - ver0.4")
     print("=" * 50)
     print("\n请选择 AI API 输入方式:")
     print("  1. 我有 API 端点（自动识别提供商）")
@@ -1464,7 +1464,7 @@ def get_config(force_reset: bool = False):
         saved = load_config()
         if saved.get("api_key") and saved.get("base_url") and saved.get("model"):
             print("\n" + "=" * 50)
-            print("🤖 小小泽 - ver0.3")
+            print("🤖 小小泽 - ver0.4")
             print("=" * 50)
             print(f"\n📌 检测到已保存的配置:")
             print(f"   AI 提供商: {saved.get('provider', '未知')}")
