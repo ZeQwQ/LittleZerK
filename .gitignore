@@ -16,6 +16,7 @@ logs/
 
 # 会话保存文件
 latest*.json
+conversations/
 
 # IDE
 .vscode/
