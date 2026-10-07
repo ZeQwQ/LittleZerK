@@ -1,0 +1,22 @@
+{
+  "name": "littlezerk",
+  "version": "0.4.0",
+  "description": "小小泽 AI 助手 - 基于 Claude 的智能对话工具",
+  "main": "index.js",
+  "bin": {
+    "littlezerk": "./bin/run.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "keywords": ["ai", "claude", "assistant", "小小泽"],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ZeQwQ/LittleZerK_ver.0.3"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
