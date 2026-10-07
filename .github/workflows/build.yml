@@ -43,10 +43,26 @@ jobs:
           pip install -r requirements.txt
           pip install nuitka ordered-set zstandard inflate64
 
+      - name: Download Dependency Walker (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $depsDir = "$env:LOCALAPPDATA\Nuitka\dependencywalker"
+          New-Item -ItemType Directory -Force -Path $depsDir | Out-Null
+          $zipPath = "$depsDir\depends.zip"
+          if (-not (Test-Path "$depsDir\depends.exe")) {
+            Write-Host "Downloading Dependency Walker..."
+            Invoke-WebRequest -Uri "https://dependencywalker.com/depends22_x64.zip" -OutFile $zipPath
+            Expand-Archive -Path $zipPath -DestinationPath $depsDir -Force
+            Remove-Item $zipPath
+          }
+          Write-Host "Dependency Walker ready at: $depsDir"
+
       - name: Build with Nuitka (Windows)
         if: matrix.platform == 'windows'
         shell: pwsh
         run: |
+          $env:PYTHONPATH = ""
           python -m nuitka --standalone --follow-imports --output-filename=agent.exe agent.py
 
       - name: Build with Nuitka (Unix)
@@ -59,19 +75,19 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $targetDir = "dist/littlezerk/bin/${{ matrix.platform }}-${{ matrix.arch }}"
+          $targetDir = "dist/bin/${{ matrix.platform }}-${{ matrix.arch }}"
           New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
           Copy-Item -Path agent.dist/* -Destination $targetDir -Recurse
-          Compress-Archive -Path dist/littlezerk -DestinationPath dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.zip
+          Compress-Archive -Path "$targetDir" -DestinationPath dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.zip
 
       - name: Create archive (Unix)
         if: matrix.platform != 'windows'
         run: |
           mkdir -p dist
-          targetDir="dist/littlezerk/bin/${{ matrix.platform }}-${{ matrix.arch }}"
+          targetDir="dist/bin/${{ matrix.platform }}-${{ matrix.arch }}"
           mkdir -p "$targetDir"
           cp -r agent.dist/* "$targetDir/"
-          tar -czvf dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz -C dist littlezerk
+          tar -czvf dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz -C dist/bin ${{ matrix.platform }}-${{ matrix.arch }}
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
