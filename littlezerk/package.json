@@ -1,6 +1,6 @@
 {
   "name": "littlezerk",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "description": "小小泽 AI 助手 - 基于 Claude 的智能对话工具",
   "main": "index.js",
   "bin": {
