@@ -18,7 +18,7 @@ const platformMap = {
 
 const platformKey = platformMap[platform];
 const binaryName = platformKey === 'windows' ? 'agent.exe' : 'agent';
-const binaryPath = path.join(__dirname, '..', 'bin', platformKey, arch, binaryName);
+const binaryPath = path.join(__dirname, '..', 'bin', `${platformKey}-${arch}`, binaryName);
 
 const fs = require('fs');
 if (!fs.existsSync(binaryPath)) {

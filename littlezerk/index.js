@@ -27,7 +27,7 @@ if (!platformKey) {
 
 // 预编译二进制路径
 const binaryName = platformKey === 'windows' ? 'agent.exe' : 'agent';
-const binaryPath = path.join(__dirname, 'bin', platformKey, arch, binaryName);
+const binaryPath = path.join(__dirname, 'bin', `${platformKey}-${arch}`, binaryName);
 
 const fs = require('fs');
 if (!fs.existsSync(binaryPath)) {
