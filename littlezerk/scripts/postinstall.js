@@ -8,7 +8,6 @@
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
-const zlib = require('zlib');
 const { execSync } = require('child_process');
 
 const platform = process.platform;
@@ -76,46 +75,18 @@ function downloadFile(url, dest) {
 
 // 解压 tar.gz
 function extractTarGz(tarPath, destDir) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    fs.createReadStream(tarPath)
-      .pipe(zlib.createGunzip())
-      .on('data', (chunk) => chunks.push(chunk))
-      .on('end', () => {
-        // 简单的 tar 解压（只处理最外层）
-        const Buffer = require('buffer').Buffer;
-        const data = Buffer.concat(chunks);
-        let i = 0;
-        while (i < data.length) {
-          // tar header is 512 bytes
-          if (data.slice(i, i + 100).toString().includes('ustar')) {
-            const header = data.slice(i, i + 512);
-            const fileName = header.slice(0, 100).toString().replace(/\0/g, '').trim();
-            const fileSizeStr = header.slice(124, 136).toString().replace(/\0/g, '').trim();
-            const fileSize = parseInt(fileSizeStr, 8);
-
-            if (fileName && fileSize > 0) {
-              const content = data.slice(i + 512, i + 512 + fileSize);
-              const outPath = path.join(destDir, path.basename(fileName));
-              fs.writeFileSync(outPath, content);
-            }
-            i += 512 + Math.ceil(fileSize / 512) * 512;
-          } else {
-            break;
-          }
-        }
-        resolve();
-      })
-      .on('error', reject);
-  });
+  try {
+    execSync(`tar -xzf "${tarPath}" -C "${destDir}"`, { stdio: 'inherit' });
+    return Promise.resolve();
+  } catch (err) {
+    return Promise.reject(err);
+  }
 }
 
 // 解压 zip (Windows)
 function extractZip(zipPath, destDir) {
   try {
-    // 使用 PowerShell 解压
-    const cmd = `powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force"`;
-    execSync(cmd, { stdio: 'inherit' });
+    execSync(`powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force"`, { stdio: 'inherit' });
     return Promise.resolve();
   } catch (err) {
     return Promise.reject(err);
