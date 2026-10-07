@@ -54,11 +54,14 @@ jobs:
       - name: Create archive
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $targetDir = "dist/littlezerk/bin/${{ matrix.platform }}-${{ matrix.arch }}"
+          New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+          Copy-Item -Path agent.dist/* -Destination $targetDir -Recurse
           if ("${{ matrix.platform }}" -eq "windows") {
-            Compress-Archive -Path agent.dist/* -DestinationPath dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.zip
+            Compress-Archive -Path dist/littlezerk -DestinationPath dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.zip
           } else {
-            tar -czvf dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz -C agent.dist .
-          fi
+            tar -czvf dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz -C dist littlezerk
+          }
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
