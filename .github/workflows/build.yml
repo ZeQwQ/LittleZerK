@@ -45,20 +45,19 @@ jobs:
 
       - name: Build with Nuitka
         run: |
-          if [ "${{ matrix.platform }}" == "windows" ]; then
+          if ("${{ matrix.platform }}" -eq "windows") {
             python -m nuitka --standalone --follow-imports --output-filename=agent.exe agent.py
-          else
+          } else {
             python -m nuitka --standalone --follow-imports --output-filename=agent agent.py
-          fi
+          }
 
       - name: Create archive
         run: |
-          mkdir -p dist
-          cd agent.dist
-          if [ "${{ matrix.platform }}" == "windows" ]; then
-            powershell Compress-Archive -Path * -DestinationPath ../dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.zip
-          else
-            tar -czvf ../dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz *
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          if ("${{ matrix.platform }}" -eq "windows") {
+            Compress-Archive -Path agent.dist/* -DestinationPath dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.zip
+          } else {
+            tar -czvf dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz -C agent.dist .
           fi
 
       - name: Upload Release Asset
