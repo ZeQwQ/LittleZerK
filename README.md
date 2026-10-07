@@ -16,10 +16,19 @@
 
 ## 快速开始
 
+### 方式一：npm 安装（推荐）
+
+```bash
+npm install -g littlezerk
+littlezerk
+```
+
+### 方式二：从源码运行
+
 ```bash
 # 克隆项目
-git clone <your-repo-url>
-cd openharness-agent-loop
+git clone https://github.com/ZeQwQ/LittleZerK_ver.0.3.git
+cd LittleZerK_ver.0.3
 
 # 创建虚拟环境
 python3 -m venv .venv
@@ -27,7 +36,7 @@ source .venv/bin/activate  # Linux/Mac
 # .venv\Scripts\activate   # Windows
 
 # 安装依赖
-pip install openai
+pip install -r requirements.txt
 
 # 运行
 python3 agent.py
@@ -93,6 +102,12 @@ python3 agent.py
 ├── 面试可能的问题.md      # 面试问题整理
 ├── README.md             # 本文件
 ├── conversations/        # 对话记录保存
+├── littlezerk/           # npm 包源码
+│   ├── package.json      # npm 包配置
+│   ├── index.js          # npm 入口
+│   ├── bin/run.js        # CLI 入口
+│   └── scripts/          # 脚本
+├── .github/workflows/    # GitHub Actions
 ├── .env.example          # 环境变量示例
 └── .gitignore            # Git 忽略配置
 ```
