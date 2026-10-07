@@ -63,12 +63,12 @@ jobs:
         shell: pwsh
         run: |
           $env:PYTHONPATH = ""
-          python -m nuitka --standalone --follow-imports --output-filename=agent.exe --windows-dependency-walker-download=yes agent.py
+          python -m nuitka --standalone --follow-imports --output-filename=agent.exe agent.py
 
       - name: Build with Nuitka (Unix)
         if: matrix.platform != 'windows'
         run: |
-          python -m nuitka --standalone --follow-imports --output-filename=agent agent.py
+          python -m nuitka --standalone --follow-imports --output-filename=agent --gcc-download=yes agent.py
 
       - name: Create archive (Windows)
         if: matrix.platform == 'windows'
