@@ -63,7 +63,7 @@ jobs:
         shell: pwsh
         run: |
           $env:PYTHONPATH = ""
-          python -m nuitka --standalone --follow-imports --output-filename=agent.exe --prefer-cache=yes agent.py
+          python -m nuitka --onefile --follow-imports --output-filename=agent.exe agent.py
 
       - name: Build with Nuitka (Unix)
         if: matrix.platform != 'windows'
