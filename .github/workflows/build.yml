@@ -43,25 +43,35 @@ jobs:
           pip install -r requirements.txt
           pip install nuitka ordered-set zstandard inflate64
 
-      - name: Build with Nuitka
+      - name: Build with Nuitka (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
         run: |
-          if ("${{ matrix.platform }}" -eq "windows") {
-            python -m nuitka --standalone --follow-imports --output-filename=agent.exe agent.py
-          } else {
-            python -m nuitka --standalone --follow-imports --output-filename=agent agent.py
-          }
+          python -m nuitka --standalone --follow-imports --output-filename=agent.exe agent.py
 
-      - name: Create archive
+      - name: Build with Nuitka (Unix)
+        if: matrix.platform != 'windows'
+        run: |
+          python -m nuitka --standalone --follow-imports --output-filename=agent agent.py
+
+      - name: Create archive (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           $targetDir = "dist/littlezerk/bin/${{ matrix.platform }}-${{ matrix.arch }}"
           New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
           Copy-Item -Path agent.dist/* -Destination $targetDir -Recurse
-          if ("${{ matrix.platform }}" -eq "windows") {
-            Compress-Archive -Path dist/littlezerk -DestinationPath dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.zip
-          } else {
-            tar -czvf dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz -C dist littlezerk
-          }
+          Compress-Archive -Path dist/littlezerk -DestinationPath dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.zip
+
+      - name: Create archive (Unix)
+        if: matrix.platform != 'windows'
+        run: |
+          mkdir -p dist
+          targetDir="dist/littlezerk/bin/${{ matrix.platform }}-${{ matrix.arch }}"
+          mkdir -p "$targetDir"
+          cp -r agent.dist/* "$targetDir/"
+          tar -czvf dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz -C dist littlezerk
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
