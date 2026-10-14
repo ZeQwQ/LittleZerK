@@ -95,3 +95,5 @@ jobs:
           tag_name: ${{ github.ref }}
           files: dist/littlezerk-*.tar.gz dist/littlezerk-*.zip
           generate_release_notes: true
+          draft: false
+          prerelease: false
