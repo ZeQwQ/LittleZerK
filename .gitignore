@@ -1,7 +1,10 @@
 # Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 .venv/
+venv/
 
 # 环境变量
 .env
@@ -27,3 +30,19 @@ conversations/
 
 # 私密文档
 面试可能的问题.md
+重构计划*.md
+
+# 备份文件
+*.bak
+
+# 备份文件夹
+*bak*/
+
+# Nuitka 构建产物
+*.build/
+*.dist/
+agent.dist/
+agent.onefile-build/
+
+# 临时文件
+temp_download.*

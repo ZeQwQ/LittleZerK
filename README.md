@@ -1,6 +1,6 @@
 # 小小泽
 
-> 一个基于 OpenHarness 架构设计的智能 Agent（ver0.4）
+> 一个基于 OpenHarness 架构设计的智能 Agent（ver0.5）
 
 ## 功能
 
@@ -78,18 +78,18 @@ python3 agent.py
 | `search_train` | 搜索火车票信息 |
 | `search_web` | 通用网页搜索 |
 | `read_file` | 读取本地文件（PDF、Markdown、txt） |
+| `add_longterm_memory` | 添加信息到长期记忆 |
+| `get_longterm_memories` | 获取长期记忆内容 |
+| `remove_longterm_memory` | 删除指定长期记忆 |
 
-## ver0.3 → ver0.4 更新速览
+## ver0.4 → ver0.5 更新速览
 
 | 类别 | 更新内容 |
 |------|----------|
-| 🆕 新工具 | `create_todo_list`、`save_session_state`、`get_current_time`，工具箱越来越丰富啦 🎉 |
-| 🌐 联网搜索 | `search_flight`、`search_train`、`search_web`，小小泽终于可以上网冲浪了 🌊 |
-| 🔒 安全加固 | calculator 升级为 AST 解析，再也不怕代码注入了 💪 |
-| 🧠 记忆系统 | 新格式 `K:/A:/P:` + 动态检索，省 token 还不容易乱 🧠 |
-| 📋 ToDoList | 完成后自动重置，每次任务都重新思考，再也不会偷懒啦 😎 |
-| 📄 文件读取 | `read_file` 工具支持 PDF、Markdown、txt，本地文档也能读啦 📚 |
-| 💾 会话保存 | 支持覆盖/时间戳两种模式，再也不怕占空间啦 🗃️ |
+| 🏗️ 模块化重构 | agent.py 从 1737 行拆分为 9 个模块，主入口仅 64 行 📦 |
+| 🧩 高内聚低耦合 | 模块间通过参数传递依赖，便于独立测试和维护 🔧 |
+| 📦 打包兼容 | Nuitka 自动追踪导入，npm 包无需修改 🚀 |
+| 🧠 长期记忆 | 新增永久记忆系统，保存用户偏好和重要信息 💾 |
 
 ---
 
@@ -97,7 +97,16 @@ python3 agent.py
 
 ```
 .
-├── agent.py              # 主程序
+├── agent.py              # 主入口
+├── memory.py             # 记忆系统模块
+├── todolist.py           # 任务清单模块
+├── config_manager.py      # 配置管理模块
+├── tools.py              # 工具定义模块
+├── tool_impls.py         # 工具实现模块
+├── prompts.py            # 提示词模板模块
+├── api_detection.py       # API 自动检测模块
+├── config_flow.py        # 配置流程模块
+├── agent_loop.py         # Agent 主循环模块
 ├── 小小泽更新日志.md      # 更新日志
 ├── 面试可能的问题.md      # 面试问题整理
 ├── README.md             # 本文件
@@ -120,7 +129,7 @@ python3 agent.py
 
 ## 未来版本
 
-### Ver0.5 计划
+### Ver0.6 计划
 - 🔒 **权限安全** - 提升小小泽安全意识，做好权限拦截，不读取用户隐私信息（或读取前询问）🤐
 - 🤖 **子 Agent** - 添加小小小泽（子 Agent），让小小泽可以做更多事 🧐
 - 📧 **邮箱推送** - 每日天气推送至邮箱，温暖人心 🤗
