@@ -29,119 +29,170 @@ const ext = platformKey === 'windows' ? 'zip' : 'tar.gz';
 const archiveName = `littlezerk-${platformKey}-${arch}.${ext}`;
 const binaryName = platformKey === 'windows' ? 'agent.exe' : 'agent';
 
-// 获取包版本
-const pkgVersion = require('../package.json').version;
-const repoOwner = 'ZeQwQ';
-const repoName = 'LittleZerK_ver.0.3';
+// 包版本
+const pkg = require('../package.json');
+const pkgVersion = pkg.version;
+const repoOwner = (pkg.littlezerk && pkg.littlezerk.owner) || 'ZeQwQ';
+const repoName = (pkg.littlezerk && pkg.littlezerk.repo) || 'LittleZerK_ver.0.3';
 
-// 目标目录
-const targetBinDir = path.join(__dirname, '..', 'bin', `${platformKey}-${arch}`);
+// bin/ 是解压根目录：压缩包内已包含 <platform>-<arch>/ 这一层
+const binRoot = path.join(__dirname, '..', 'bin');
+const targetBinDir = path.join(binRoot, `${platformKey}-${arch}`);
 const targetAgentPath = path.join(targetBinDir, binaryName);
 
-// 检查是否已有二进制
-if (fs.existsSync(targetAgentPath)) {
-  console.log(`✅ 找到预编译二进制: ${targetAgentPath}`);
-  process.exit(0);
+const hasLocalBinary = fs.existsSync(targetAgentPath);
+
+console.log(`📦 littlezerk ${pkgVersion} - ${platformKey}-${arch}`);
+
+if (hasLocalBinary) {
+  console.log(`🔄 检测到已安装的二进制，将尝试从 Release 获取 v${pkgVersion} 更新`);
 }
 
-// 确保目录存在
-fs.mkdirSync(targetBinDir, { recursive: true });
+// ─────────────────────────────────────────────────────────────
+// 下载
+// ─────────────────────────────────────────────────────────────
 
-// 下载文件
 function downloadFile(url, dest) {
   return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(dest);
     https.get(url, (response) => {
       if (response.statusCode === 302 || response.statusCode === 301) {
-        // 重定向
         downloadFile(response.headers.location, dest).then(resolve).catch(reject);
         return;
       }
       if (response.statusCode !== 200) {
-        reject(new Error(`下载失败: ${response.statusCode}`));
+        reject(new Error(`下载失败: HTTP ${response.statusCode}`));
         return;
       }
+      const file = fs.createWriteStream(dest);
       response.pipe(file);
       file.on('finish', () => {
         file.close();
         resolve();
       });
-    }).on('error', (err) => {
-      fs.unlink(dest, () => {});
-      reject(err);
-    });
+      file.on('error', reject);
+    }).on('error', reject);
   });
 }
 
-// 解压 tar.gz
+function fetchJson(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, { headers: { 'User-Agent': 'littlezerk-postinstall' } }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => (data += chunk));
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch (e) {
+          reject(new Error(`解析 GitHub API 响应失败: ${data.slice(0, 200)}`));
+        }
+      });
+    }).on('error', reject);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
+// 解压
+// ─────────────────────────────────────────────────────────────
+
 function extractTarGz(tarPath, destDir) {
   try {
     execSync(`tar -xzf "${tarPath}" -C "${destDir}"`, { stdio: 'inherit' });
-    return Promise.resolve();
+    return true;
   } catch (err) {
-    return Promise.reject(err);
+    console.error(`❌ tar 解压失败: ${err.message}`);
+    return false;
   }
 }
 
-// 解压 zip (Windows)
 function extractZip(zipPath, destDir) {
   try {
-    execSync(`powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force"`, { stdio: 'inherit' });
-    return Promise.resolve();
+    execSync(
+      `powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force"`,
+      { stdio: 'inherit' }
+    );
+    return true;
   } catch (err) {
-    return Promise.reject(err);
+    console.error(`❌ zip 解压失败: ${err.message}`);
+    return false;
   }
 }
 
-async function main() {
-  console.log(`📦 正在为 ${platformKey}-${arch} 下载预编译二进制...`);
-  console.log(`版本: ${pkgVersion}`);
+/**
+ * 压缩包内含顶层目录 <platform>-<arch>/，若个别环境解压出嵌套目录，
+ * 这里做一次归一化，保证最终路径是 bin/<platform>-<arch>/<binary>
+ */
+function normalizeLayout() {
+  if (fs.existsSync(targetAgentPath)) return true;
 
+  const nested = path.join(targetBinDir, `${platformKey}-${arch}`, binaryName);
+  if (fs.existsSync(nested)) {
+    console.log('🔧 修正嵌套目录结构...');
+    fs.renameSync(nested, targetAgentPath);
+    return true;
+  }
+  return false;
+}
+
+// ─────────────────────────────────────────────────────────────
+// 主流程
+// ─────────────────────────────────────────────────────────────
+
+async function main() {
   const apiUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/releases/tags/v${pkgVersion}`;
+  const tempArchive = path.join(__dirname, '..', '..', `temp_download.${ext}`);
 
   try {
-    // 获取 Release 信息
-    const response = await new Promise((resolve, reject) => {
-      https.get(apiUrl, { headers: { 'User-Agent': 'littlezerk-postinstall' } }, (res) => {
-        let data = '';
-        res.on('data', chunk => data += chunk);
-        res.on('end', () => resolve(JSON.parse(data)));
-      }).on('error', reject);
-    });
+    console.log(`⬇️  查询 Release: v${pkgVersion}`);
+    const response = await fetchJson(apiUrl);
 
-    // 找到对应平台的资产
-    const asset = response.assets?.find(a => a.name === archiveName);
+    if (!response || response.message) {
+      throw new Error(`获取 Release 失败: ${response && response.message}`);
+    }
+
+    const asset = (response.assets || []).find((a) => a.name === archiveName);
     if (!asset) {
-      throw new Error(`未找到 ${archiveName}，请确认该版本已发布`);
+      const available = (response.assets || []).map((a) => a.name).join(', ') || '（无）';
+      throw new Error(`未找到 ${archiveName}，该 Release 现有资产: ${available}`);
     }
 
     console.log(`⬇️  下载: ${asset.browser_download_url}`);
-
-    const tempArchive = path.join(__dirname, '..', '..', 'temp_download.' + ext);
     await downloadFile(asset.browser_download_url, tempArchive);
 
-    console.log(`📂 解压到: ${targetBinDir}`);
+    fs.mkdirSync(binRoot, { recursive: true });
 
-    if (ext === 'zip') {
-      await extractZip(tempArchive, targetBinDir);
-    } else {
-      await extractTarGz(tempArchive, targetBinDir);
+    // 解压到 bin/ 根目录（压缩包自带 <platform>-<arch>/ 顶层目录）
+    const ok = ext === 'zip'
+      ? extractZip(tempArchive, binRoot)
+      : extractTarGz(tempArchive, binRoot);
+
+    if (ok && normalizeLayout() && fs.existsSync(targetAgentPath)) {
+      console.log(`✅ 安装完成: ${targetAgentPath}`);
+      console.log(`✅ 运行 'littlezerk' 启动`);
+      return;
     }
 
-    // 清理临时文件
-    fs.unlinkSync(tempArchive);
-
-    console.log(`✅ 安装完成! 运行 'littlezerk' 启动`);
-
+    throw new Error('解压后未找到可执行文件');
   } catch (err) {
-    console.error(`❌ 安装失败: ${err.message}`);
-    console.log(`
+    console.error(`❌ ${err.message}`);
+
+    // 有本地二进制时降级：网络不通 / Release 无资产时仍可使用
+    if (hasLocalBinary) {
+      console.warn(`⚠️  使用已存在的本地二进制: ${targetAgentPath}`);
+      console.warn(`⚠️  如需最新版本，请访问 https://github.com/${repoOwner}/${repoName}/releases 手动下载`);
+      return;
+    }
+
+    console.error(`
 手动安装:
-1. 访问 https://github.com/${repoOwner}/${repoName}/releases
+1. 访问 https://github.com/${repoOwner}/${repoName}/releases/tag/v${pkgVersion}
 2. 下载 ${archiveName}
-3. 解压到: ${path.join(__dirname, '..', 'bin')}
+3. 解压到 ${binRoot}  （压缩包内含 ${platformKey}-${arch}/ 目录）
 `);
     process.exit(1);
+  } finally {
+    if (fs.existsSync(tempArchive)) {
+      try { fs.unlinkSync(tempArchive); } catch (e) { /* 忽略清理失败 */ }
+    }
   }
 }
 

@@ -88,7 +88,8 @@ python3 agent.py
 |------|----------|
 | 🏗️ 模块化重构 | agent.py 从 1737 行拆分为 9 个模块，主入口仅 64 行 📦 |
 | 🧩 高内聚低耦合 | 模块间通过参数传递依赖，便于独立测试和维护 🔧 |
-| 📦 打包兼容 | Nuitka 自动追踪导入，npm 包无需修改 🚀 |
+| 📦 打包修复 | 动态探测依赖包并整包打包 openai，修复二进制报 `No module named 'openai.resources.chat.chat'` 🚀 |
+| 📤 发布修复 | GitHub Actions 产物正确上传为 Release Assets，npm 包可自动下载更新 🔧 |
 | 🧠 长期记忆 | 新增永久记忆系统，保存用户偏好和重要信息 💾 |
 
 ---
@@ -107,6 +108,7 @@ python3 agent.py
 ├── api_detection.py       # API 自动检测模块
 ├── config_flow.py        # 配置流程模块
 ├── agent_loop.py         # Agent 主循环模块
+├── build_flags.py        # 生成 Nuitka 编译参数（动态探测依赖包名）
 ├── 小小泽更新日志.md      # 更新日志
 ├── 面试可能的问题.md      # 面试问题整理
 ├── README.md             # 本文件

@@ -240,7 +240,7 @@ def save_session_state(msgs: list = None) -> str:
             # 保存最近的消息摘要
             recent = msgs[-20:] if len(msgs) > 20 else msgs
             session_data["dialogue_summary"] = [
-                {"role": m.get("role"), "content": m.get("content", "")[:200]}
+                {"role": m.get("role"), "content": (m.get("content") or "")[:200]}
                 for m in recent if isinstance(m, dict)
             ]
 

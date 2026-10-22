@@ -5,9 +5,18 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: '要上传二进制的 Release 标签，例如 v0.5.4'
+        required: true
+        type: string
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -16,7 +25,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          # macos-latest 现在是 Apple Silicon，Intel 需要固定用 macos-13
+          - os: macos-13
             platform: macos
             arch: x64
           - os: macos-latest
@@ -35,13 +45,17 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install --upgrade nuitka ordered-set zstandard inflate64
+
+      # 依赖包名各环境可能不同（httpx/httpx2 等），运行时探测再生成编译参数
+      - name: Prepare Nuitka include flags
+        run: python build_flags.py --env
 
       - name: Download Dependency Walker (Windows)
         if: matrix.platform == 'windows'
@@ -58,17 +72,26 @@ jobs:
           }
           Write-Host "Dependency Walker ready at: $depsDir"
 
-      - name: Build with Nuitka (Windows)
-        if: matrix.platform == 'windows'
-        shell: pwsh
+      # 统一使用 --standalone：产物是「可执行文件 + 同目录依赖文件」，
+      # npm 包的 bin/<platform>-<arch>/ 目录结构依赖这一点
+      - name: Build with Nuitka
         run: |
-          $env:PYTHONPATH = ""
-          @("y") | python -m nuitka --onefile --follow-imports --include-package=openai --output-filename=agent.exe agent.py
+          python -m nuitka --standalone --follow-imports --output-filename=agent $NUITKA_INCLUDES agent.py
+        env:
+          NUITKA_INCLUDES: ${{ env.NUITKA_INCLUDES }}
 
-      - name: Build with Nuitka (Unix)
-        if: matrix.platform != 'windows'
+      - name: Verify build output
         run: |
-          python -m nuitka --standalone --follow-imports --include-package=openai --output-filename=agent agent.py
+          echo "---- agent.dist 顶层内容 ----"
+          ls agent.dist | head -20
+          echo "---- openai 是否被打包 ----"
+          if [ -d agent.dist/openai ]; then
+            echo "✅ openai 已打包"
+            ls agent.dist/openai/resources/chat/ 2>/dev/null | head -5
+          else
+            echo "❌ openai 未打包，编译产物不可用"
+            exit 1
+          fi
 
       - name: Create archive (Windows)
         if: matrix.platform == 'windows'
@@ -78,7 +101,8 @@ jobs:
           $targetDir = "dist/bin/${{ matrix.platform }}-${{ matrix.arch }}"
           New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
           Copy-Item -Path agent.dist/* -Destination $targetDir -Recurse
-          Compress-Archive -Path "$targetDir" -DestinationPath dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.zip
+          Compress-Archive -Path $targetDir -DestinationPath "dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.zip"
+          Get-ChildItem dist
 
       - name: Create archive (Unix)
         if: matrix.platform != 'windows'
@@ -87,13 +111,17 @@ jobs:
           targetDir="dist/bin/${{ matrix.platform }}-${{ matrix.arch }}"
           mkdir -p "$targetDir"
           cp -r agent.dist/* "$targetDir/"
-          tar -czvf dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz -C dist/bin ${{ matrix.platform }}-${{ matrix.arch }}
+          tar -czf "dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz" -C dist/bin "${{ matrix.platform }}-${{ matrix.arch }}"
+          ls -lh dist
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref }}
-          files: dist/littlezerk-*.tar.gz dist/littlezerk-*.zip
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          files: |
+            dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz
+            dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.zip
+          fail_on_unmatched_files: true
           generate_release_notes: true
           draft: false
           prerelease: false
