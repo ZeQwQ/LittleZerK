@@ -33,7 +33,7 @@ const binaryName = platformKey === 'windows' ? 'agent.exe' : 'agent';
 const pkg = require('../package.json');
 const pkgVersion = pkg.version;
 const repoOwner = (pkg.littlezerk && pkg.littlezerk.owner) || 'ZeQwQ';
-const repoName = (pkg.littlezerk && pkg.littlezerk.repo) || 'LittleZerK_ver.0.3';
+const repoName = (pkg.littlezerk && pkg.littlezerk.repo) || 'LittleZerK';
 
 // bin/ 是解压根目录：压缩包内已包含 <platform>-<arch>/ 这一层
 const binRoot = path.join(__dirname, '..', 'bin');

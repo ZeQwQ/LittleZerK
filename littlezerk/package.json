@@ -14,11 +14,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ZeQwQ/LittleZerK_ver.0.3.git"
+    "url": "git+https://github.com/ZeQwQ/LittleZerK.git"
   },
   "littlezerk": {
     "owner": "ZeQwQ",
-    "repo": "LittleZerK_ver.0.3"
+    "repo": "LittleZerK"
   },
   "files": [
     "index.js",
