@@ -6,7 +6,7 @@ ver0.5
 
 from config_manager import (
     MODEL_PRESETS, WEATHER_PRESETS,
-    STEP_BACK, load_config, save_config
+    STEP_BACK, VERSION, load_config, save_config
 )
 from api_detection import detect_provider
 
@@ -310,7 +310,7 @@ def get_config(force_reset: bool = False):
         saved = load_config()
         if saved.get("api_key") and saved.get("base_url") and saved.get("model"):
             print("\n" + "=" * 50)
-            print("🤖 小小泽 - ver0.5")
+            print(f"🤖 小小泽 - {VERSION}")
             print("=" * 50)
             print(f"\n📌 检测到已保存的配置:")
             print(f"   AI 提供商: {saved.get('provider', '未知')}")

@@ -11,10 +11,13 @@ Minimal OpenHarness-Style Agent Loop - ver0.5
 - 本地文件读取：PDF、Markdown、txt
 """
 
+import sys
+
 from openai import OpenAI
 
 from memory import Memory
 from todolist import ToDoList
+from config_manager import VERSION
 from config_flow import get_config
 from agent_loop import run_loop
 
@@ -23,8 +26,26 @@ from agent_loop import run_loop
 # 入口
 # ─────────────────────────────────────────────────────────────
 
+def print_version() -> None:
+    """打印版本信息（同时验证运行时依赖是否可用）"""
+    try:
+        import openai
+        openai_version = openai.__version__
+    except Exception as e:
+        print(f"小小泽 {VERSION}")
+        print(f"❌ openai SDK 不可用: {e}")
+        sys.exit(1)
+
+    print(f"小小泽 {VERSION}")
+    print(f"openai SDK {openai_version}")
+
+
 def main():
     """主入口"""
+    if len(sys.argv) > 1 and sys.argv[1] in ("--version", "-v"):
+        print_version()
+        return
+
     config = get_config()
 
     client = OpenAI(

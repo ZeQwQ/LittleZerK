@@ -73,26 +73,39 @@ jobs:
           }
           Write-Host "Dependency Walker ready at: $depsDir"
 
-      # 统一使用 --standalone：产物是「可执行文件 + 同目录依赖文件」，
+      # Unix 用 --standalone：产物是「可执行文件 + 同目录依赖文件」，
       # npm 包的 bin/<platform>-<arch>/ 目录结构依赖这一点
-      - name: Build with Nuitka
+      # --assume-yes-for-downloads：让 Nuitka 自动确认下载 ccache 等组件，避免交互卡死
+      - name: Build with Nuitka (Unix)
+        if: matrix.platform != 'windows'
         run: |
-          python -m nuitka --standalone --follow-imports --output-filename=agent $NUITKA_INCLUDES agent.py
-        env:
-          NUITKA_INCLUDES: ${{ env.NUITKA_INCLUDES }}
+          python -m nuitka --standalone --follow-imports --assume-yes-for-downloads --output-filename=agent $NUITKA_INCLUDES agent.py
 
-      - name: Verify build output
+      # Windows 用 --onefile：单个自包含 exe，npm 包只需分发一个文件
+      - name: Build with Nuitka (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = ""
+          @("y") | python -m nuitka --onefile --follow-imports --assume-yes-for-downloads --output-filename=agent.exe $env:NUITKA_INCLUDES agent.py
+
+      # 产物验证：真正跑一次 --version，证明 openai 等依赖已正确打包
+      # （仅看文件列表无法证明，因为 Nuitka 会把纯 Python 包编进可执行文件）
+      - name: Verify build output (Unix)
+        if: matrix.platform != 'windows'
         run: |
           echo "---- agent.dist 顶层内容 ----"
           ls agent.dist | head -20
-          echo "---- openai 是否被打包 ----"
-          if [ -d agent.dist/openai ]; then
-            echo "✅ openai 已打包"
-            ls agent.dist/openai/resources/chat/ 2>/dev/null | head -5
-          else
-            echo "❌ openai 未打包，编译产物不可用"
-            exit 1
-          fi
+          echo "---- 运行 --version ----"
+          ./agent.dist/agent --version
+
+      - name: Verify build output (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          Get-ChildItem agent.exe
+          Write-Host "---- 运行 --version ----"
+          .\agent.exe --version
 
       - name: Create archive (Windows)
         if: matrix.platform == 'windows'
@@ -101,7 +114,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           $targetDir = "dist/bin/${{ matrix.platform }}-${{ matrix.arch }}"
           New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
-          Copy-Item -Path agent.dist/* -Destination $targetDir -Recurse
+          Copy-Item -Path agent.exe -Destination $targetDir
           Compress-Archive -Path $targetDir -DestinationPath "dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.zip"
           Get-ChildItem dist
 
@@ -115,13 +128,25 @@ jobs:
           tar -czf "dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz" -C dist/bin "${{ matrix.platform }}-${{ matrix.arch }}"
           ls -lh dist
 
-      - name: Upload Release Asset
+      # 上传步骤按平台拆分：每个平台只产出一种压缩包，
+      # 配合 fail_on_unmatched_files 才能真正暴露产物缺失
+      - name: Upload Release Asset (Unix)
+        if: matrix.platform != 'windows'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          files: |
-            dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz
-            dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.zip
+          files: dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+
+      - name: Upload Release Asset (Windows)
+        if: matrix.platform == 'windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          files: dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.zip
           fail_on_unmatched_files: true
           generate_release_notes: true
           draft: false
