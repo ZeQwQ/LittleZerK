@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -25,8 +25,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macos-latest 现在是 Apple Silicon，Intel 需要固定用 macos-13
-          - os: macos-13
+          # macos-latest 是 Apple Silicon，Intel 需要用不带 -arm64 后缀的标签
+          # （macos-13 已下线，现存 macos-14 / macos-15 / macos-26 均为 Intel）
+          - os: macos-15
             platform: macos
             arch: x64
           - os: macos-latest
