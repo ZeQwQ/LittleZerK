@@ -27,8 +27,8 @@ littlezerk
 
 ```bash
 # 克隆项目
-git clone https://github.com/ZeQwQ/LittleZerK_ver.0.3.git
-cd LittleZerK_ver.0.3
+git clone https://github.com/ZeQwQ/LittleZerK.git
+cd LittleZerK
 
 # 创建虚拟环境
 python3 -m venv .venv
@@ -40,6 +40,9 @@ pip install -r requirements.txt
 
 # 运行
 python3 agent.py
+
+# 查看版本
+python3 agent.py --version
 ```
 
 ## 配置
