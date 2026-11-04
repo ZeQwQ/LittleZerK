@@ -79,15 +79,23 @@ jobs:
       - name: Build with Nuitka (Unix)
         if: matrix.platform != 'windows'
         run: |
-          python -m nuitka --standalone --follow-imports --assume-yes-for-downloads --output-filename=agent $NUITKA_INCLUDES agent.py
+          python -m nuitka --standalone --follow-imports --assume-yes-for-downloads --output-filename=agent $NUITKA_INCLUDES agent.py 2>&1 | tee build.log
 
       # Windows 用 --onefile：单个自包含 exe，npm 包只需分发一个文件
+      # 完整依赖编译失败时回退到最小依赖集重试，保证至少能产出可用的 exe
       - name: Build with Nuitka (Windows)
         if: matrix.platform == 'windows'
         shell: pwsh
         run: |
           $env:PYTHONPATH = ""
-          @("y") | python -m nuitka --onefile --follow-imports --assume-yes-for-downloads --output-filename=agent.exe $env:NUITKA_INCLUDES agent.py
+          Write-Host "=== 尝试完整依赖编译 ==="
+          @("y") | python -m nuitka --onefile --follow-imports --assume-yes-for-downloads --output-filename=agent.exe $env:NUITKA_INCLUDES agent.py 2>&1 | Tee-Object -FilePath nuitka-build.log
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "=== 完整依赖编译失败，回退到最小依赖集重试 ==="
+            Write-Host "=== 完整依赖编译失败 ===" | Out-File -FilePath nuitka-build.log -Append
+            @("y") | python -m nuitka --onefile --follow-imports --assume-yes-for-downloads --output-filename=agent.exe --include-package=openai agent.py 2>&1 | Tee-Object -FilePath nuitka-build.log -Append
+          }
+          exit $LASTEXITCODE
 
       # 产物验证：真正跑一次 --version，证明 openai 等依赖已正确打包
       # （仅看文件列表无法证明，因为 Nuitka 会把纯 Python 包编进可执行文件）
@@ -149,5 +157,18 @@ jobs:
           files: dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.zip
           fail_on_unmatched_files: true
           generate_release_notes: true
+          draft: false
+          prerelease: false
+
+      # 构建失败时把编译日志作为 Release 资产上传，便于排查（无需 GitHub 管理权限即可读取）
+      - name: Upload build log on failure
+        if: failure()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          files: |
+            nuitka-build.log
+            build.log
+          fail_on_unmatched_files: false
           draft: false
           prerelease: false
