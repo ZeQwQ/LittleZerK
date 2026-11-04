@@ -44,6 +44,7 @@ conversations/
 agent.dist/
 agent.onefile-build/
 dist/
+nuitka_flags.txt
 
 # npm 包内的预编译二进制（体积大，由 postinstall 从 Release 下载）
 littlezerk/bin/*/

@@ -13,12 +13,15 @@
 
 用法：
     python build_flags.py            # 打印参数
-    python build_flags.py --env      # 写入 $GITHUB_ENV（CI 用）
+    python build_flags.py --env      # 写入 $GITHUB_ENV + nuitka_flags.txt（CI 用）
 """
 
 import importlib.util
 import os
 import sys
+
+# 供 CI 读取的参数文件：一行一个参数
+FLAGS_FILE = "nuitka_flags.txt"
 
 # 候选依赖：命中哪个就包含哪个
 CANDIDATES = [
@@ -82,6 +85,12 @@ def main():
             sys.exit(1)
         with open(github_env, "a", encoding="utf-8") as f:
             f.write(f"NUITKA_INCLUDES={joined}\n")
+
+        # PowerShell 不会对变量做单词切分，直接展开 "$env:NUITKA_INCLUDES"
+        # 会把整串参数当成一个参数传入 Nuitka。
+        # 因此额外写一份「一行一个参数」的文件，供 Windows 构建步骤用数组展开。
+        with open(FLAGS_FILE, "w", encoding="utf-8") as f:
+            f.write("\n".join(flags) + "\n")
     else:
         print(joined)
 

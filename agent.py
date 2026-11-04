@@ -26,6 +26,20 @@ from agent_loop import run_loop
 # 入口
 # ─────────────────────────────────────────────────────────────
 
+def setup_stdout_encoding() -> None:
+    """
+    Windows 控制台默认编码不是 UTF-8（如 cp936 / cp437），
+    直接输出中文会抛 UnicodeEncodeError 导致程序崩溃。
+    这里统一把标准输出/错误流切到 UTF-8，并对无法编码的字符降级处理。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            # 老版本 Python 或流被重定向时不支持 reconfigure，忽略即可
+            pass
+
+
 def print_version() -> None:
     """打印版本信息（同时验证运行时依赖是否可用）"""
     try:
@@ -42,6 +56,8 @@ def print_version() -> None:
 
 def main():
     """主入口"""
+    setup_stdout_encoding()
+
     if len(sys.argv) > 1 and sys.argv[1] in ("--version", "-v"):
         print_version()
         return

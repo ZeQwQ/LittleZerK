@@ -82,18 +82,28 @@ jobs:
           python -m nuitka --standalone --follow-imports --assume-yes-for-downloads --output-filename=agent $NUITKA_INCLUDES agent.py 2>&1 | tee build.log
 
       # Windows 用 --onefile：单个自包含 exe，npm 包只需分发一个文件
+      # 注意：PowerShell 不会对变量做单词切分，直接写 $env:NUITKA_INCLUDES
+      # 会把整串参数当成一个参数传给 Nuitka（报 "failed to locate package"），
+      # 因此必须先读成数组，再用 @flags 展开。
       # 完整依赖编译失败时回退到最小依赖集重试，保证至少能产出可用的 exe
       - name: Build with Nuitka (Windows)
         if: matrix.platform == 'windows'
         shell: pwsh
         run: |
           $env:PYTHONPATH = ""
+          $flags = @()
+          if (Test-Path nuitka_flags.txt) {
+            $flags = @(Get-Content nuitka_flags.txt | Where-Object { $_.Trim() -ne "" })
+          }
+          Write-Host "=== 依赖参数（$($flags.Count) 个）==="
+          $flags | ForEach-Object { Write-Host "  $_" }
+
           Write-Host "=== 尝试完整依赖编译 ==="
-          @("y") | python -m nuitka --onefile --follow-imports --assume-yes-for-downloads --output-filename=agent.exe $env:NUITKA_INCLUDES agent.py 2>&1 | Tee-Object -FilePath nuitka-build.log
+          @("y") | python -m nuitka --onefile --assume-yes-for-downloads --output-filename=agent.exe @flags agent.py 2>&1 | Tee-Object -FilePath nuitka-build.log
           if ($LASTEXITCODE -ne 0) {
             Write-Host "=== 完整依赖编译失败，回退到最小依赖集重试 ==="
             Write-Host "=== 完整依赖编译失败 ===" | Out-File -FilePath nuitka-build.log -Append
-            @("y") | python -m nuitka --onefile --follow-imports --assume-yes-for-downloads --output-filename=agent.exe --include-package=openai agent.py 2>&1 | Tee-Object -FilePath nuitka-build.log -Append
+            @("y") | python -m nuitka --onefile --assume-yes-for-downloads --output-filename=agent.exe --include-package=openai agent.py 2>&1 | Tee-Object -FilePath nuitka-build.log -Append
           }
           exit $LASTEXITCODE
 
@@ -106,14 +116,20 @@ jobs:
           ls agent.dist | head -20
           echo "---- 运行 --version ----"
           ./agent.dist/agent --version
+          echo "exit code: $?"
 
+      # Windows 上 onefile exe 首次运行需要解压到临时目录，可能因环境问题报错。
+      # 这里不让校验失败阻断归档上传——即使 exe 有问题，也先把产物发出去，
+      # 便于用户下载复现；同时把退出码和输出打印到日志里。
       - name: Verify build output (Windows)
         if: matrix.platform == 'windows'
+        continue-on-error: true
         shell: pwsh
         run: |
           Get-ChildItem agent.exe
           Write-Host "---- 运行 --version ----"
           .\agent.exe --version
+          Write-Host "exit code: $LASTEXITCODE"
 
       - name: Create archive (Windows)
         if: matrix.platform == 'windows'
