@@ -18,8 +18,32 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # 手动触发时用输入的 tag，推送 tag 触发时用 ref_name
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
 jobs:
+  # ─────────────────────────────────────────────────────────────
+  # 先把 Release 建好，各平台再并行上传，避免多个 job 同时
+  # "读 release → 追加资产" 互相撞车
+  # ─────────────────────────────────────────────────────────────
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG 已存在，跳过创建"
+          else
+            echo "创建 Release $RELEASE_TAG（tag 不存在时按当前提交自动创建）"
+            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --title "小小泽 $RELEASE_TAG" --generate-notes
+          fi
+
   build:
+    needs: create-release
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -152,39 +176,41 @@ jobs:
           tar -czf "dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz" -C dist/bin "${{ matrix.platform }}-${{ matrix.arch }}"
           ls -lh dist
 
-      # 上传步骤按平台拆分：每个平台只产出一种压缩包，
-      # 配合 fail_on_unmatched_files 才能真正暴露产物缺失
-      - name: Upload Release Asset (Unix)
-        if: matrix.platform != 'windows'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          files: dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz
-          fail_on_unmatched_files: true
-          generate_release_notes: true
-          draft: false
-          prerelease: false
-
-      - name: Upload Release Asset (Windows)
-        if: matrix.platform == 'windows'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          files: dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.zip
-          fail_on_unmatched_files: true
-          generate_release_notes: true
-          draft: false
-          prerelease: false
+      # 上传用 GitHub CLI：
+      # - Release 已由前置 job 建好，不会出现多个 job 抢建 Release
+      # - --clobber 让重跑可以覆盖同名资产（幂等）
+      # - 失败自动重试 3 次（网络/并发导致的偶发失败）
+      - name: Upload Release Asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -o pipefail
+          FILE="dist/littlezerk-${{ matrix.platform }}-${{ matrix.arch }}.${{ matrix.platform == 'windows' && 'zip' || 'tar.gz' }}"
+          echo "上传 $FILE 到 Release $RELEASE_TAG"
+          for i in 1 2 3; do
+            if gh release upload "$RELEASE_TAG" "$FILE" --clobber --repo "${{ github.repository }}" 2>&1 | tee upload.log; then
+              echo "✅ 上传成功"
+              exit 0
+            fi
+            echo "⚠️ 第 $i 次上传失败，10 秒后重试"
+            sleep 10
+          done
+          echo "❌ 上传失败，日志如下："
+          cat upload.log
+          exit 1
 
       # 构建失败时把编译日志作为 Release 资产上传，便于排查（无需 GitHub 管理权限即可读取）
       - name: Upload build log on failure
         if: failure()
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          files: |
-            nuitka-build.log
-            build.log
-          fail_on_unmatched_files: false
-          draft: false
-          prerelease: false
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for LOG in nuitka-build.log build.log upload.log; do
+            if [ -f "$LOG" ]; then
+              echo "上传日志 $LOG"
+              gh release upload "$RELEASE_TAG" "$LOG" --clobber --repo "${{ github.repository }}" || \
+                echo "⚠️ 日志 $LOG 上传失败"
+            fi
+          done
