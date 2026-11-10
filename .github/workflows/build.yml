@@ -34,12 +34,18 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
         run: |
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+          # 这个 job 没有 checkout，工作目录不是 git 仓库，
+          # gh 无法自动推断仓库，必须显式 --repo
+          if gh release view "$RELEASE_TAG" --repo "$REPO" >/dev/null 2>&1; then
             echo "Release $RELEASE_TAG 已存在，跳过创建"
           else
             echo "创建 Release $RELEASE_TAG（tag 不存在时按当前提交自动创建）"
-            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --title "小小泽 $RELEASE_TAG" --generate-notes
+            if ! gh release create "$RELEASE_TAG" --repo "$REPO" --target "$GITHUB_SHA" --title "小小泽 $RELEASE_TAG" --generate-notes; then
+              # 并发创建导致的冲突：只要 Release 最终存在就算成功
+              gh release view "$RELEASE_TAG" --repo "$REPO" >/dev/null 2>&1 && echo "Release 已存在，继续" || exit 1
+            fi
           fi
 
   build:
